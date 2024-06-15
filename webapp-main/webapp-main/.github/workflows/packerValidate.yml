@@ -1,0 +1,106 @@
+name: Integration Tests & packer Validate
+on:
+  pull_request:
+    branches:
+      - main
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - id: 'auth'
+        uses: 'google-github-actions/auth@v2'
+        with:
+         credentials_json: '${{ secrets.SERVICE_ACCOUNT_CREDS }}'
+
+      - name: 'Set up Cloud SDK'
+        uses: 'google-github-actions/setup-gcloud@v2'
+
+      - name: Install PostgreSQL
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql postgresql-contrib
+        
+      - name: Start PostgreSQL service
+        run: |
+          sudo systemctl start postgresql.service
+
+      - name: Setup Database User and Password
+        run: |
+          sudo -u ${{ secrets.POSTGRES_USER }} psql -c "ALTER USER ${{ secrets.POSTGRES_USER }} WITH PASSWORD '${{ secrets.POSTGRES_PASSWORD }}';"
+        
+      - name: Create Database
+        run: |
+            sudo -u ${{ secrets.POSTGRES_USER }} psql -c "CREATE DATABASE ${{ secrets.POSTGRES_DB }};"
+        
+      - name: Show Databases
+        run: |
+            sudo -u ${{ secrets.POSTGRES_USER }} psql -c "\l"
+
+      - name: 'Use gcloud CLI'
+        run: 'gcloud info'
+
+      - name: Install Packer
+        run: |
+             curl -O https://releases.hashicorp.com/packer/${{ env.PACKER_VERSION }}/packer_${{ env.PACKER_VERSION }}_linux_amd64.zip
+             unzip packer_${{ env.PACKER_VERSION }}_linux_amd64.zip
+             sudo mv packer /usr/local/bin
+        env:
+          PACKER_VERSION: "1.10.0"
+
+      - name: Create zip file
+        run: zip -r webapp .
+    
+      - name: Move zip file to packer folder
+        run: mv webapp.zip packerTemplates/
+
+      - name: Creating env file
+        run: |
+           echo "DB_USER=${{ secrets.POSTGRES_USER }}" >> .env
+           echo "DB_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> .env
+           echo "PORT=8080" >> .env
+           echo "DB_NAME=${{ secrets.POSTGRES_DB }}" >> .env
+           echo "DB_HOST=${{ secrets.POSTGRES_HOST }}" >> .env
+
+      - name: Move env to packerTemplates folder
+        run: mv .env packerTemplates/
+
+      - name: Initialise packer template
+        run: |
+             cd packerTemplates
+             packer init .
+
+      - name: Format Packer template
+        run: |  
+          cd packerTemplates
+          packer fmt -check -recursive .
+      
+      - name: Validate Packer template
+        run: |  
+          cd packerTemplates
+          packer validate -var "project_id=dev-gcp-414621" -var "zone=us-central1-a" -var "source_image_family=centos-stream-8" -var "ssh_username=packer" -var "machine_type=e2-medium" -var "disk_size=100" -var "disk_type=pd-standard" .
+
+      - name: Use Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '14.x'
+ 
+      - name: Install Dependencies
+        run: npm i
+
+      - name: Create log file and give permissions
+        run: | 
+          sudo touch /var/log/webapp.log
+          sudo chmod -R -f 666 /var/log/webapp.log
+
+      - name: Run Tests
+        run: npm test
+        env:
+          DB_USER : ${{ secrets.POSTGRES_USER }}
+          DB_PASSWORD : ${{ secrets.POSTGRES_PASSWORD }}
+          PORT : 8080
+          DB_NAME : ${{ secrets.POSTGRES_DB }}
+          DB_HOST : ${{ secrets.POSTGRES_HOST }}

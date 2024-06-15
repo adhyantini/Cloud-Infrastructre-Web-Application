@@ -1,0 +1,19 @@
+ [Unit]
+Description=Service start on instance launch
+ConditionPathExists=/tmp/webapp/server.js
+After=network.target
+
+[Service]
+Type=simple
+User=csye6225
+Group=csye6225
+WorkingDirectory=/tmp/webapp
+ExecStart=/bin/bash -c 'if [[ -f /tmp/webapp/.env ]]; then /usr/bin/npm start; fi'
+Restart=always
+RestartSec=3
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=csye6225
+
+[Install]
+WantedBy=multi-user.target
